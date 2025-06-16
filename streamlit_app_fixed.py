@@ -18,9 +18,7 @@ st.set_page_config(
 
 # LOGIN CREDENTIALS
 VALID_CREDENTIALS = {
-    "captain": "fishing2025",
-    "admin": "moana123",
-    "demo": "demo123"
+    "fishing2025": "moana123"
 }
 
 def show_login_page():
