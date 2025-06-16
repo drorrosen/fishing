@@ -7,6 +7,7 @@ from datetime import datetime
 import folium
 from streamlit_folium import st_folium
 import os
+from scipy.optimize import fsolve
 
 # Page configuration
 st.set_page_config(
@@ -783,14 +784,17 @@ def main():
     # Sidebar controls
     st.sidebar.header("📊 Dashboard Controls")
 
-    st.sidebar.subheader("📂 Upload Data")
+    # This is now a global control for the MOANA tab
     uploaded_file = st.sidebar.file_uploader(
         "Upload a MOANA CSV file", 
         type=['csv']
     )
 
     # Create tab system
-    tab1, tab2 = st.tabs(["🎣 MOANA Sensor Analysis", "⚓ Longline Catenary Calculator"])
+    tab1, tab2 = st.tabs([
+        "🎣 MOANA Sensor Analysis", 
+        "⚓ Longline Catenary Calculator"
+    ])
     
     with tab1:
         # MOANA sensor analysis (existing code)
@@ -842,19 +846,11 @@ def moana_sensor_analysis(uploaded_file):
         
         # Get available flags from the dataframe
         available_flags = sorted(moana_df['QC_FLAG'].unique())
-        
-        # Determine a safe default, only using flags that are actually present
-        desired_defaults = [1, 2, 3]
-        safe_default = [flag for flag in desired_defaults if flag in available_flags]
-        
-        # If no desired defaults are available, fall back to all available flags
-        if not safe_default:
-            safe_default = available_flags
 
         qc_flags = st.sidebar.multiselect(
             "Filter by Quality Control Flags",
             options=list(all_qc_options.keys()),
-            default=safe_default,
+            default=available_flags, # Default to all available flags
             format_func=lambda x: all_qc_options.get(x, f"Unknown Flag: {x}")
         )
         
@@ -1061,73 +1057,81 @@ def catenary_curve_builder():
     st.markdown("### ⚙️ Longline Configuration Controls")
     
     # Create columns for the sliders
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
+        distance_between_bouys = st.slider(
+            "Distance Between Floats (m)",
+            min_value=500,
+            max_value=3000,
+            value=1929,
+            step=50,
+            help="Horizontal distance between the two main floats"
+        )
         sag_depth = st.slider(
             "Maximum Sag Depth (m)",
             min_value=50,
             max_value=450,
             value=300,
             step=10,
-            help="Deepest point your longline reaches"
+            help="Deepest point the longline reaches from the float line"
         )
-        
         num_hooks = st.slider(
             "Number of Hooks",
-            min_value=5,
+            min_value=1,
             max_value=50,
             value=26,
             step=1,
-            help="Total hooks between floats"
+            help="Total hooks on the longline"
         )
-        
-        distance_between_bouys = st.slider(
-            "Distance Between Bouys (m)",
-            min_value=1000,
-            max_value=3000,
-            value=1929,
-            step=50,
-            help="Horizontal distance between floats"
-        )
-    
+
     with col2:
         buoy_depth = st.slider(
-            "Buoy Drop Depth (m)",
+            "Float Line Depth (m)",
             min_value=0,
             max_value=50,
             value=11,
             step=1,
-            help="How deep the buoys sit"
+            help="How deep the main float line sits below the surface"
+        )
+        branchline_length = st.slider(
+            "Branchline Length (m)",
+            min_value=1,
+            max_value=50,
+            value=15,
+            step=1,
+            help="The length of the vertical line the hook hangs from"
         )
         
-        hook_start_offset = st.slider(
-            "Hook Start Offset (m)",
-            min_value=50,
-            max_value=200,
-            value=120,
-            step=10,
-            help="Distance from buoy before hooks start"
+    with col3:
+        st.markdown("🌡️ **Temperature Profile**")
+        surface_temp = st.slider(
+            "Surface Temperature (°C)", 0, 35, 24,
+            help="Temperature at the ocean surface"
         )
-    
+        bottom_temp = st.slider(
+            "Bottom Temperature (°C)", 0, 35, 8,
+            help="Temperature at the maximum fishing depth"
+        )
+
     # Configuration summary KPIs at the top
     st.markdown("### Configuration Overview")
     col1, col2, col3 = st.columns(3)
     
-    hook_spacing = (distance_between_bouys - 2 * hook_start_offset) / (num_hooks - 1) if num_hooks > 1 else 0
+    max_fishing_depth = sag_depth + branchline_length
     
     with col1:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label">⚓ CONFIGURATION</div>
-            <div class="metric-value">{num_hooks} Hooks</div>
+            <div class="metric-label">🎣 TOTAL HOOKS</div>
+            <div class="metric-value">{num_hooks}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label">📏 MAX DEPTH</div>
+            <div class="metric-label">📏 MAX SAG DEPTH</div>
             <div class="metric-value">{sag_depth}m</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1135,8 +1139,8 @@ def catenary_curve_builder():
     with col3:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label">🎣 HOOK SPACING</div>
-            <div class="metric-value">{hook_spacing:.1f}m</div>
+            <div class="metric-label">⚓ MAX FISHING DEPTH</div>
+            <div class="metric-value">{max_fishing_depth}m</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -1145,7 +1149,7 @@ def catenary_curve_builder():
     # Create catenary curve
     catenary_fig = create_interactive_catenary(
         sag_depth, num_hooks, distance_between_bouys, 
-        buoy_depth, hook_start_offset
+        buoy_depth, branchline_length, surface_temp, bottom_temp
     )
     
     # Display the catenary visualization
@@ -1153,130 +1157,163 @@ def catenary_curve_builder():
     st.plotly_chart(catenary_fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, buoy_depth, hook_start_offset):
-    """Create interactive catenary curve with temperature background"""
+def solve_catenary_a(L, D):
+    """
+    Solves the catenary equation D = a * (cosh(L/(2a)) - 1) for the parameter 'a'.
+    L = horizontal distance between endpoints
+    D = vertical sag from endpoints to the vertex
+    """
+    if D <= 1e-6:  # If there is no sag, the line is straight (infinite 'a')
+        return 1e9
+    # The equation to solve for a: a * (cosh(L / (2a)) - 1) - D = 0
+    func = lambda a: a * (np.cosh(L / (2 * a)) - 1) - D
     
-    # Calculate catenary curve parameters
-    L = distance_between_bouys  # horizontal distance
-    D = sag_depth - buoy_depth  # vertical sag from buoy level
+    # A good initial guess can be found from the parabolic approximation of a catenary
+    initial_guess = L**2 / (4 * D)
     
-    # Catenary parameter calculation (simplified)
-    # For a catenary: y = a * cosh(x/a) - a
-    # We need to solve for 'a' given L and D
+    # Use fsolve to find the root
+    try:
+        a_solution, = fsolve(func, x0=initial_guess)
+    except: # fsolve might fail in some edge cases
+        a_solution = initial_guess
+    return a_solution
+
+def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, buoy_depth, branchline_length, surface_temp, bottom_temp):
+    """Create an interactive, single-basket catenary curve with branchlines."""
     
-    # Approximate solution for catenary parameter
-    a = L / (2 * np.arcsinh(D / (L/2)))
-    
-    # Generate catenary curve points
-    x_points = np.linspace(-L/2, L/2, 1000)
-    y_points = a * np.cosh(x_points / a) - a + buoy_depth
-    
-    # Create temperature background
     fig = go.Figure()
     
-    # Add temperature gradient background (30°C to 0°C from 0-450m)
-    depth_levels = np.linspace(0, 450, 50)
-    temp_levels = 30 - (depth_levels / 450) * 30  # 30°C at surface, 0°C at 450m
-    
-    for i in range(len(depth_levels)-1):
-        temp_color = temp_levels[i]
-        # Create color from temperature (red=warm, blue=cold)
-        normalized_temp = temp_color / 30
-        red = int(255 * normalized_temp)
-        blue = int(255 * (1 - normalized_temp))
-        color = f"rgba({red}, 100, {blue}, 0.3)"
+    max_fishing_depth = sag_depth + branchline_length
+
+    # --- Draw Temperature Gradient Background ---
+    depth_levels = np.linspace(0, max_fishing_depth + 50, 20)
+    for i in range(len(depth_levels) - 1):
+        # Calculate temperature at this depth segment (linear interpolation)
+        depth_fraction = (depth_levels[i] / (max_fishing_depth + 50))
+        temp = surface_temp - (surface_temp - bottom_temp) * depth_fraction
         
+        # Normalize temperature to 0-1 for the colorscale
+        normalized_temp = (temp - bottom_temp) / (surface_temp - bottom_temp) if (surface_temp - bottom_temp) != 0 else 0.5
+        
+        segment_color = px.colors.sample_colorscale('inferno', normalized_temp)[0]
+
         fig.add_shape(
             type="rect",
-            x0=-L/2 - 200, x1=L/2 + 200,
+            x0=-distance_between_bouys, x1=distance_between_bouys * 2,
             y0=depth_levels[i], y1=depth_levels[i+1],
-            fillcolor=color,
+            fillcolor=segment_color,
             line_width=0,
-            layer="below"
+            layer="below",
+            opacity=0.3
         )
-    
-    # Add main catenary line (BLACK as requested)
+
+    L = distance_between_bouys
+    D = sag_depth - buoy_depth
+
+    # --- Catenary Calculation ---
+    # 1. Solve for the catenary parameter 'a', which defines the shape
+    a = solve_catenary_a(L, D)
+
+    # 2. Generate points for the main catenary curve using the CORRECTED formula
+    # This formula ensures the curve hangs down ("smiles")
+    x_points = np.linspace(-L/2, L/2, 200)
+    y_points = sag_depth - a * (np.cosh(x_points / a) - 1)
+
+    # Add the main catenary line
     fig.add_trace(go.Scatter(
         x=x_points,
         y=y_points,
         mode='lines',
-        line=dict(color='black', width=4),
-        name='Longline',
-        hovertemplate='<b>Distance:</b> %{x:.0f}m<br><b>Depth:</b> %{y:.1f}m<extra></extra>'
+        line=dict(color='black', width=3),
+        name='Mainline'
     ))
-    
-    # Add buoys
+
+    # --- Draw hooks and branchlines ---
+    if num_hooks > 0:
+        # Distribute hooks evenly, avoiding the very edges
+        hook_spacing_factor = 0.8
+        hook_start_x = - (L / 2) * hook_spacing_factor
+        hook_end_x = (L / 2) * hook_spacing_factor
+        
+        hook_x_positions = np.linspace(hook_start_x, hook_end_x, num_hooks)
+        
+        # Calculate hook positions on the main line using the CORRECTED formula
+        hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
+        
+        # Calculate final hook positions at the end of the branchlines
+        hook_y_final = hook_y_on_line + branchline_length
+        
+        # Draw branchlines
+        for j in range(num_hooks):
+            fig.add_trace(go.Scatter(
+                x=[hook_x_positions[j], hook_x_positions[j]],
+                y=[hook_y_on_line[j], hook_y_final[j]],
+                mode='lines',
+                line=dict(color='black', width=1),
+                hoverinfo='none',
+                showlegend=False
+            ))
+
+        # Draw hook markers
+        fig.add_trace(go.Scatter(
+            x=hook_x_positions,
+            y=hook_y_final,
+            mode='markers',
+            marker=dict(
+                size=8,
+                color='black',
+                symbol='line-ns',
+                line=dict(width=2)
+            ),
+            name=f'Hooks',
+            hovertemplate='<b>Hook</b><br>Depth: %{y:.1f}m<extra></extra>'
+        ))
+            
+    # --- Draw Floats ---
     fig.add_trace(go.Scatter(
         x=[-L/2, L/2],
         y=[buoy_depth, buoy_depth],
         mode='markers',
         marker=dict(
-            size=20,
+            size=15,
             color='orange',
             symbol='circle',
             line=dict(color='black', width=2)
         ),
-        name='Buoys',
-        hovertemplate='<b>Buoy Position</b><br>Distance: %{x:.0f}m<br>Depth: %{y:.1f}m<extra></extra>'
+        name='Floats',
+        hovertemplate='<b>Float</b><br>Depth: %{y:.1f}m<extra></extra>'
     ))
-    
-    # Add hooks along the line (starting from offset)
-    if num_hooks > 0:
-        hook_x_start = -L/2 + hook_start_offset
-        hook_x_end = L/2 - hook_start_offset
-        hook_x_positions = np.linspace(hook_x_start, hook_x_end, num_hooks)
-        
-        # Interpolate hook depths from catenary curve
-        hook_depths = np.interp(hook_x_positions, x_points, y_points)
-        
-        fig.add_trace(go.Scatter(
-            x=hook_x_positions,
-            y=hook_depths,
-            mode='markers',
-            marker=dict(
-                size=8,
-                color='red',
-                symbol='x',
-                line=dict(color='white', width=1)
-            ),
-            name=f'{num_hooks} Hooks',
-            hovertemplate='<b>Hook #%{pointNumber}</b><br>Distance: %{x:.0f}m<br>Depth: %{y:.1f}m<extra></extra>'
-        ))
-    
-    # Add depth zone reference lines
-    fig.add_hline(y=50, line_dash="dot", line_color="yellow", 
-                  annotation_text="Epipelagic Zone (0-50m)", annotation_position="right")
-    fig.add_hline(y=200, line_dash="dot", line_color="orange", 
-                  annotation_text="Mesopelagic Zone (50-200m)", annotation_position="right")
-    
-    # Update layout
+
+    # --- Final Layout Configuration ---
     fig.update_layout(
         title=dict(
-            text=f"<b>Longline Configuration: {num_hooks} Hooks at {sag_depth}m Maximum Depth</b>",
+            text=f"<b>Longline Configuration: {num_hooks} Hooks</b>",
             x=0.5,
             font=dict(size=18, color='#333333')
         ),
         xaxis=dict(
             title="Distance (m)",
-            range=[-L/2 - 200, L/2 + 200],
+            range=[-L/2 - 50, L/2 + 50],
             gridcolor='#EAEAEA',
+            zeroline=False,
             showgrid=True,
             tickfont=dict(size=12, color='#555555')
         ),
         yaxis=dict(
             title="Depth (m)",
-            range=[450, 0],  # Fixed range as requested (0-450m)
+            range=[max_fishing_depth + 50, -10],
+            autorange=False, # Y-axis is already oriented correctly (depth increases downwards)
             gridcolor='#EAEAEA',
             showgrid=True,
             tickfont=dict(size=12, color='#555555')
         ),
-        plot_bgcolor='#fbf9f4',
-        paper_bgcolor='#fbf9f4',
+        plot_bgcolor='rgba(0,0,0,0)', # Make plot background transparent to see shapes
+        paper_bgcolor='white',
         height=700,
         showlegend=True,
         legend=dict(
             x=0.02, y=0.98,
-            bgcolor='white',
+            bgcolor='rgba(255, 255, 255, 0.8)',
             bordercolor='#CCCCCC',
             borderwidth=1
         ),
