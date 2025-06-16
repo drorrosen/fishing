@@ -645,7 +645,7 @@ def create_time_depth_profile(df):
             x=df_sorted['DATETIME'],
             y=df_sorted['DEPTH'],
             mode='lines+markers',
-            line=dict(color='rgba(30, 64, 175, 0.8)', width=3), # Darker blue line from reference
+            line=dict(color='#1e1e3f', width=5), # Dark navy/black line like original chart, thicker
             marker=dict(
                 color=df_sorted['TEMPERATURE'],
                 colorscale='YlOrRd_r',  # Yellow-Orange-Red reversed, closer to reference
@@ -660,7 +660,7 @@ def create_time_depth_profile(df):
                 cmin=df_sorted['TEMPERATURE'].min(),
                 cmax=df_sorted['TEMPERATURE'].max(),
                 showscale=True,
-                line=dict(color='rgba(30, 64, 175, 0.5)', width=1)
+                line=dict(color='#1e1e3f', width=1)
             ),
             name='Fishing Gear Profile',
             hovertemplate='<b>Time:</b> %{x}<br><b>Depth:</b> %{y:.1f}m<br><b>Temperature:</b> %{marker.color:.2f}°C<br><extra></extra>'
