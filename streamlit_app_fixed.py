@@ -627,8 +627,8 @@ def create_time_depth_profile(df):
         df_sorted = df.sort_values('DATETIME').reset_index(drop=True)
         
         # Handle empty or all-NaN data gracefully
-        if df_sorted.empty:
-            return go.Figure(layout=dict(title="No data to display for the selected time range."))
+        if df_sorted.empty or len(df_sorted) < 2:
+            return go.Figure(layout=dict(title="Not enough data to display for the selected time range."))
 
         max_depth = df_sorted['DEPTH'].max()
         if pd.isna(max_depth):
@@ -640,16 +640,39 @@ def create_time_depth_profile(df):
         # Create the main figure
         fig = go.Figure()
         
-        # Add main depth profile line with temperature color coding
+        temp_min = df_sorted['TEMPERATURE'].min()
+        temp_max = df_sorted['TEMPERATURE'].max()
+
+        # Create a continuous line with a color gradient by plotting many small segments
+        for i in range(len(df_sorted) - 1):
+            p1 = df_sorted.iloc[i]
+            p2 = df_sorted.iloc[i+1]
+            avg_temp = (p1['TEMPERATURE'] + p2['TEMPERATURE']) / 2
+            
+            normalized_temp = (avg_temp - temp_min) / (temp_max - temp_min)
+            segment_color = px.colors.sample_colorscale('inferno', normalized_temp)[0]
+            
+            fig.add_trace(go.Scatter(
+                x=[p1['DATETIME'], p2['DATETIME']],
+                y=[p1['DEPTH'], p2['DEPTH']],
+                mode='lines',
+                line=dict(color=segment_color, width=9),  # Increased thickness by 1.5x
+                hoverinfo='none',
+                showlegend=False
+            ))
+            
+        # Add an invisible trace with markers to handle hovering and the colorbar
         fig.add_trace(go.Scatter(
             x=df_sorted['DATETIME'],
             y=df_sorted['DEPTH'],
-            mode='lines+markers',
-            line=dict(color='#1e1e3f', width=5), # Dark navy/black line like original chart, thicker
+            mode='markers',
             marker=dict(
                 color=df_sorted['TEMPERATURE'],
-                colorscale='YlOrRd_r',  # Yellow-Orange-Red reversed, closer to reference
-                size=6,
+                colorscale='inferno',
+                cmin=temp_min,
+                cmax=temp_max,
+                size=10,
+                opacity=0,  # Make markers invisible
                 colorbar=dict(
                     title=dict(text="Temp (°C)", font=dict(size=12)),
                     thickness=15,
@@ -657,14 +680,15 @@ def create_time_depth_profile(df):
                     x=1.05,
                     tickfont=dict(size=10)
                 ),
-                cmin=df_sorted['TEMPERATURE'].min(),
-                cmax=df_sorted['TEMPERATURE'].max(),
                 showscale=True,
-                line=dict(color='#1e1e3f', width=1)
             ),
-            name='Fishing Gear Profile',
-            hovertemplate='<b>Time:</b> %{x}<br><b>Depth:</b> %{y:.1f}m<br><b>Temperature:</b> %{marker.color:.2f}°C<br><extra></extra>'
+            hovertemplate='<b>Time:</b> %{x}<br><b>Depth:</b> %{y:.1f}m<br><b>Temperature:</b> %{marker.color:.2f}°C<br><extra></extra>',
+            showlegend=False
         ))
+
+        # Manually add a legend entry
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
+            line=dict(color='grey', width=9), name='Fishing Gear Profile'))
         
         # Dynamic fishing phase annotations based on time, not record count
         deployment_time = df_sorted['DATETIME'].iloc[0]
@@ -859,7 +883,7 @@ def moana_sensor_analysis(uploaded_file):
             st.stop()
         
         # Header
-        logo_base64 = "data:image/png;base64,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"
+        logo_base64 = "data:image/png;base64,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"
         
         st.markdown(f"""
         <div class="header-container">
