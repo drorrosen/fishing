@@ -1120,7 +1120,7 @@ def catenary_curve_builder():
         hook_spacing = st.slider(
             "Hook Spacing (Horizontal, m)",
             min_value=10.0,
-            max_value=200.0,
+            max_value=500.0,
             step=1.0,
             help="Horizontal distance between hooks. Adjusting this will change the Number of Hooks.",
             key='hook_spacing',
