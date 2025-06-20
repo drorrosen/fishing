@@ -791,9 +791,10 @@ def main():
     )
 
     # Create tab system
-    tab1, tab2 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "🎣 MOANA Sensor Analysis", 
-        "⚓ Longline Catenary Calculator"
+        "⚓ Longline Catenary Calculator",
+        "🐟 Fish Catch Analysis"
     ])
     
     with tab1:
@@ -803,6 +804,10 @@ def main():
     with tab2:
         # Catenary curve builder
         catenary_curve_builder()
+
+    with tab3:
+        # Fish catch analysis
+        fish_catch_analysis()
 
 def moana_sensor_analysis(uploaded_file):
     """MOANA sensor data analysis tab"""
@@ -1043,6 +1048,13 @@ def moana_sensor_analysis(uploaded_file):
 def catenary_curve_builder():
     """Interactive catenary curve builder"""
     
+    # Initialize session state for linked sliders if not already present
+    if 'num_hooks' not in st.session_state:
+        st.session_state.num_hooks = 26
+    if 'hook_spacing' not in st.session_state:
+        # Calculate initial spacing based on other defaults
+        st.session_state.hook_spacing = (3000 * 0.8) / (26 - 1)
+
     # Header for catenary tab
     st.markdown(f"""
     <div class="header-container">
@@ -1059,41 +1071,63 @@ def catenary_curve_builder():
     # Create columns for the sliders
     col1, col2, col3 = st.columns(3)
     
+    # --- Helper functions for callbacks ---
+    def update_spacing():
+        """Callback to update spacing when num_hooks or distance_between_bouys changes."""
+        if st.session_state.num_hooks > 1:
+            hook_spacing_factor = 0.8
+            total_hook_span = st.session_state.distance_between_bouys * hook_spacing_factor
+            st.session_state.hook_spacing = total_hook_span / (st.session_state.num_hooks - 1)
+
+    def update_hooks():
+        """Callback to update num_hooks when spacing changes."""
+        if st.session_state.hook_spacing > 0:
+            hook_spacing_factor = 0.8
+            total_hook_span = st.session_state.distance_between_bouys * hook_spacing_factor
+            # num_hooks = number of spaces + 1
+            st.session_state.num_hooks = int(total_hook_span / st.session_state.hook_spacing) + 1
+
     with col1:
         distance_between_bouys = st.slider(
             "Distance Between Floats (m)",
             min_value=500,
             max_value=3000,
-            value=1929,
+            value=3000,
             step=50,
-            help="Horizontal distance between the two main floats"
+            help="Horizontal distance between the two main floats",
+            key='distance_between_bouys', # Add key to access it in callbacks
+            on_change=update_spacing # This ensures spacing updates if distance changes
         )
         sag_depth = st.slider(
             "Maximum Sag Depth (m)",
             min_value=50,
             max_value=450,
             value=300,
-            step=10,
+            step=1,
             help="Deepest point the longline reaches from the float line"
         )
+        
+    with col2:
         num_hooks = st.slider(
             "Number of Hooks",
             min_value=1,
             max_value=50,
-            value=26,
             step=1,
-            help="Total hooks on the longline"
+            help="Total hooks on the longline. Adjusting this will change the Hook Spacing.",
+            key='num_hooks',
+            on_change=update_spacing # Correct: changing num_hooks should update the spacing
         )
-
-    with col2:
-        buoy_depth = st.slider(
-            "Float Line Depth (m)",
-            min_value=0,
-            max_value=50,
-            value=11,
-            step=1,
-            help="How deep the main float line sits below the surface"
+        hook_spacing = st.slider(
+            "Hook Spacing (Horizontal, m)",
+            min_value=10.0,
+            max_value=200.0,
+            step=1.0,
+            help="Horizontal distance between hooks. Adjusting this will change the Number of Hooks.",
+            key='hook_spacing',
+            on_change=update_hooks # Correct: changing spacing should update the number of hooks
         )
+        
+    with col3:
         branchline_length = st.slider(
             "Branchline Length (m)",
             min_value=1,
@@ -1102,13 +1136,29 @@ def catenary_curve_builder():
             step=1,
             help="The length of the vertical line the hook hangs from"
         )
-        
-    with col3:
-        st.markdown("🌡️ **Temperature Profile**")
+        buoy_depth = st.slider(
+            "Float Line Depth (m)",
+            min_value=0,
+            max_value=50,
+            value=11,
+            step=1,
+            help="How deep the main float line sits below the surface"
+        )
+
+    # Re-run callbacks if the distance between bouys changes, as it affects both
+    # This is a simple way to keep them in sync, Streamlit reruns top-to-bottom
+    # update_spacing() # This line caused the error and must be removed
+
+    # Temperature Profile Section
+    st.markdown("---") # Visual separator
+    st.markdown("### 🌡️ Temperature Profile Controls")
+    t_col1, t_col2 = st.columns(2)
+    with t_col1:
         surface_temp = st.slider(
             "Surface Temperature (°C)", 0, 35, 24,
             help="Temperature at the ocean surface"
         )
+    with t_col2:
         bottom_temp = st.slider(
             "Bottom Temperature (°C)", 0, 35, 8,
             help="Temperature at the maximum fishing depth"
@@ -1116,19 +1166,19 @@ def catenary_curve_builder():
 
     # Configuration summary KPIs at the top
     st.markdown("### Configuration Overview")
-    col1, col2, col3 = st.columns(3)
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
     
     max_fishing_depth = sag_depth + branchline_length
-    
-    with col1:
+
+    with kpi_col1:
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">🎣 TOTAL HOOKS</div>
-            <div class="metric-value">{num_hooks}</div>
+            <div class="metric-value">{st.session_state.num_hooks}</div>
         </div>
         """, unsafe_allow_html=True)
     
-    with col2:
+    with kpi_col2:
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">📏 MAX SAG DEPTH</div>
@@ -1136,11 +1186,19 @@ def catenary_curve_builder():
         </div>
         """, unsafe_allow_html=True)
         
-    with col3:
+    with kpi_col3:
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">⚓ MAX FISHING DEPTH</div>
             <div class="metric-value">{max_fishing_depth}m</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi_col4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">↔️ HOOK SPACING (HORIZONTAL)</div>
+            <div class="metric-value">{st.session_state.hook_spacing:.1f}m</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -1148,7 +1206,7 @@ def catenary_curve_builder():
     
     # Create catenary curve
     catenary_fig = create_interactive_catenary(
-        sag_depth, num_hooks, distance_between_bouys, 
+        sag_depth, st.session_state.num_hooks, distance_between_bouys, 
         buoy_depth, branchline_length, surface_temp, bottom_temp
     )
     
@@ -1156,6 +1214,144 @@ def catenary_curve_builder():
     st.markdown('<div class="chart-container">', unsafe_allow_html=True)
     st.plotly_chart(catenary_fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
+def fish_catch_analysis():
+    """Tab for logging and analyzing fish catch data."""
+    st.markdown(f"""
+    <div class="header-container">
+        <div>
+            <h1>🐟 Fish Catch Logger & Trend Analysis</h1>
+            <p>Log your catches to identify the most productive hook positions.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Initialize session state for catch data if it doesn't exist
+    if 'catch_data' not in st.session_state:
+        st.session_state.catch_data = pd.DataFrame(columns=['Timestamp', 'Hook Number', 'Fish Weight (lbs)'])
+
+    # --- Data Input Form ---
+    st.markdown("### 📝 Log a New Catch")
+    with st.form("catch_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            hook_number = st.number_input("Hook Number", min_value=1, max_value=1000, step=1)
+            catch_date = st.date_input("Catch Date", value=datetime.now())
+        with c2:
+            fish_weight = st.number_input("Fish Weight (lbs, 0-1000)", min_value=0, max_value=1000, step=10)
+            catch_time = st.time_input("Catch Time", value=datetime.now().time())
+        
+        submit_button = st.form_submit_button(label='➕ Add Catch Record')
+
+    if submit_button:
+        catch_timestamp = datetime.combine(catch_date, catch_time)
+        new_catch = pd.DataFrame({
+            'Timestamp': [catch_timestamp],
+            'Hook Number': [hook_number],
+            'Fish Weight (lbs)': [fish_weight]
+        })
+        st.session_state.catch_data = pd.concat([st.session_state.catch_data, new_catch], ignore_index=True)
+        st.success(f"✅ Catch recorded for hook #{hook_number} ({fish_weight} lbs) on {catch_timestamp.strftime('%Y-%m-%d %H:%M')}!")
+
+    st.markdown("---")
+
+    # --- Catch Data Visualization & Management ---
+    if st.session_state.catch_data.empty:
+        st.info("No catch data logged yet. Use the form above to add your first catch.")
+    else:
+        st.markdown("### 📊 Catch Analysis")
+        
+        # Display the analysis chart
+        fig = create_catch_analysis_chart(st.session_state.catch_data)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Data table and export
+        st.markdown("### 🗂️ Raw Catch Data")
+        st.dataframe(st.session_state.catch_data, use_container_width=True)
+        
+        col1, col2 = st.columns([1, 0.2])
+        with col1:
+            csv = st.session_state.catch_data.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Download Catch Data (CSV)",
+                csv,
+                f"catch_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                "text/csv"
+            )
+        with col2:
+            if st.button("🗑️ Clear All Data", type="primary"):
+                st.session_state.catch_data = pd.DataFrame(columns=['Timestamp', 'Hook Number', 'Fish Weight (lbs)'])
+                st.rerun()
+
+def create_catch_analysis_chart(df):
+    """Creates a bar chart to visualize catch frequency and weight by hook number."""
+    
+    if df.empty:
+        return go.Figure().update_layout(title="No data to display")
+
+    # Aggregate data: count catches and sum weight per hook
+    analysis_df = df.groupby('Hook Number').agg(
+        Catch_Count=('Hook Number', 'size'),
+        Total_Weight=('Fish Weight (lbs)', 'sum')
+    ).reset_index()
+
+    fig = go.Figure()
+
+    # Add bar for catch count
+    fig.add_trace(go.Bar(
+        x=analysis_df['Hook Number'],
+        y=analysis_df['Catch_Count'],
+        name='Number of Catches',
+        marker_color='rgba(31, 119, 180, 0.8)',
+        hovertemplate='<b>Hook #:</b> %{x}<br><b>Catches:</b> %{y}<extra></extra>'
+    ))
+
+    # Add line for total weight
+    fig.add_trace(go.Scatter(
+        x=analysis_df['Hook Number'],
+        y=analysis_df['Total_Weight'],
+        name='Total Weight (lbs)',
+        mode='lines+markers',
+        line=dict(color='rgba(255, 127, 14, 1)', width=3),
+        marker=dict(size=8),
+        yaxis='y2',
+        hovertemplate='<b>Hook #:</b> %{x}<br><b>Total Weight:</b> %{y} lbs<extra></extra>'
+    ))
+
+    # Update layout for a dual-axis chart
+    fig.update_layout(
+        title=dict(
+            text="<b>Catch Frequency and Weight by Hook Number</b>",
+            x=0.5,
+            font=dict(size=18, color='#333333')
+        ),
+        xaxis=dict(
+            title="Hook Number",
+            type='category' # Treat hook numbers as categories
+        ),
+        yaxis=dict(
+            title="Number of Catches",
+            side='left',
+            color='#1f77b4'
+        ),
+        yaxis2=dict(
+            title="Total Weight (lbs)",
+            side='right',
+            overlaying='y',
+            showgrid=False,
+            color='#ff7f0e'
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        plot_bgcolor='white',
+        barmode='group'
+    )
+    return fig
 
 def solve_catenary_a(L, D):
     """
