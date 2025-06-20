@@ -1091,7 +1091,7 @@ def catenary_curve_builder():
         distance_between_bouys = st.slider(
             "Distance Between Floats (m)",
             min_value=500,
-            max_value=3000,
+            max_value=5000,
             value=3000,
             step=50,
             help="Horizontal distance between the two main floats",
@@ -1117,10 +1117,16 @@ def catenary_curve_builder():
             key='num_hooks',
             on_change=update_spacing # Correct: changing num_hooks should update the spacing
         )
+        
+        # Calculate dynamic max value for hook spacing based on distance between floats
+        # Maximum spacing occurs when we have minimum hooks (2) and maximum distance
+        max_possible_spacing = (st.session_state.distance_between_bouys * 0.8) / 1  # Worst case: only 1 gap
+        dynamic_max_spacing = float(max(max_possible_spacing, 2000))  # Ensure at least 2000m max and convert to float
+        
         hook_spacing = st.slider(
             "Hook Spacing (Horizontal, m)",
             min_value=10.0,
-            max_value=500.0,
+            max_value=dynamic_max_spacing,
             step=1.0,
             help="Horizontal distance between hooks. Adjusting this will change the Number of Hooks.",
             key='hook_spacing',
@@ -1166,54 +1172,87 @@ def catenary_curve_builder():
 
     # Configuration summary KPIs at the top
     st.markdown("### Configuration Overview")
-    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
     
-    max_fishing_depth = sag_depth + branchline_length
-
-    with kpi_col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label">🎣 TOTAL HOOKS</div>
-            <div class="metric-value">{st.session_state.num_hooks}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Validation checks
+    validation_errors = []
     
-    with kpi_col2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label">📏 MAX SAG DEPTH</div>
-            <div class="metric-value">{sag_depth}m</div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Check if hook spacing is reasonable
+    if st.session_state.num_hooks > 1:
+        calculated_spacing = (st.session_state.distance_between_bouys * 0.8) / (st.session_state.num_hooks - 1)
+        if calculated_spacing > 2000:
+            validation_errors.append(f"⚠️ Hook spacing too large ({calculated_spacing:.0f}m). Try using more hooks or reducing distance between floats.")
+        elif calculated_spacing < 5:
+            validation_errors.append(f"⚠️ Hook spacing too small ({calculated_spacing:.1f}m). Try using fewer hooks or increasing distance between floats.")
+    
+    # Check if configuration is physically reasonable
+    if st.session_state.num_hooks > 100:
+        validation_errors.append("⚠️ Too many hooks for practical longline fishing. Consider reducing to under 100 hooks.")
+    
+    if sag_depth > st.session_state.distance_between_bouys / 2:
+        validation_errors.append("⚠️ Sag depth is too large compared to distance between floats. This would create an unrealistic curve.")
+    
+    # Display validation warnings
+    if validation_errors:
+        st.markdown("### ⚠️ Configuration Warnings")
+        for error in validation_errors:
+            st.warning(error)
+        st.markdown("**Please adjust the values above to continue.**")
+        st.markdown("---")
+    
+    # Only show KPIs and chart if configuration is valid
+    if not validation_errors:
+        kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
         
-    with kpi_col3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label">⚓ MAX FISHING DEPTH</div>
-            <div class="metric-value">{max_fishing_depth}m</div>
-        </div>
-        """, unsafe_allow_html=True)
+        max_fishing_depth = sag_depth + branchline_length
 
-    with kpi_col4:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label">↔️ HOOK SPACING (HORIZONTAL)</div>
-            <div class="metric-value">{st.session_state.hook_spacing:.1f}m</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Create catenary curve
-    catenary_fig = create_interactive_catenary(
-        sag_depth, st.session_state.num_hooks, distance_between_bouys, 
-        buoy_depth, branchline_length, surface_temp, bottom_temp
-    )
-    
-    # Display the catenary visualization
-    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-    st.plotly_chart(catenary_fig, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        with kpi_col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">🎣 TOTAL HOOKS</div>
+                <div class="metric-value">{st.session_state.num_hooks}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with kpi_col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📏 MAX SAG DEPTH</div>
+                <div class="metric-value">{sag_depth}m</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with kpi_col3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">⚓ MAX FISHING DEPTH</div>
+                <div class="metric-value">{max_fishing_depth}m</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with kpi_col4:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">↔️ HOOK SPACING (HORIZONTAL)</div>
+                <div class="metric-value">{st.session_state.hook_spacing:.1f}m</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Create catenary curve
+        catenary_fig = create_interactive_catenary(
+            sag_depth, st.session_state.num_hooks, distance_between_bouys, 
+            buoy_depth, branchline_length, surface_temp, bottom_temp
+        )
+        
+        # Display the catenary visualization
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        st.plotly_chart(catenary_fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        # Show placeholder when configuration is invalid
+        st.markdown("### 📊 Longline Visualization")
+        st.info("👆 Please fix the configuration warnings above to see your longline design.")
 
 def fish_catch_analysis():
     """Tab for logging and analyzing fish catch data."""
