@@ -1077,7 +1077,11 @@ def catenary_curve_builder():
         if st.session_state.num_hooks > 1:
             hook_spacing_factor = 0.8
             total_hook_span = st.session_state.distance_between_bouys * hook_spacing_factor
-            st.session_state.hook_spacing = total_hook_span / (st.session_state.num_hooks - 1)
+            calculated_spacing = total_hook_span / (st.session_state.num_hooks - 1)
+            # Clamp the value to stay within slider bounds (10.0 to dynamic_max)
+            max_possible_spacing = (st.session_state.distance_between_bouys * 0.8) / 1
+            dynamic_max_spacing = float(max(max_possible_spacing, 2000))
+            st.session_state.hook_spacing = max(10.0, min(calculated_spacing, dynamic_max_spacing))
 
     def update_hooks():
         """Callback to update num_hooks when spacing changes."""
@@ -1085,7 +1089,9 @@ def catenary_curve_builder():
             hook_spacing_factor = 0.8
             total_hook_span = st.session_state.distance_between_bouys * hook_spacing_factor
             # num_hooks = number of spaces + 1
-            st.session_state.num_hooks = int(total_hook_span / st.session_state.hook_spacing) + 1
+            calculated_hooks = int(total_hook_span / st.session_state.hook_spacing) + 1
+            # Clamp to valid range
+            st.session_state.num_hooks = max(1, min(calculated_hooks, 50))
 
     with col1:
         distance_between_bouys = st.slider(
@@ -1298,11 +1304,71 @@ def fish_catch_analysis():
     if st.session_state.catch_data.empty:
         st.info("No catch data logged yet. Use the form above to add your first catch.")
     else:
-        st.markdown("### 📊 Catch Analysis")
+        st.markdown("### 📊 Catch Analysis Dashboard")
         
-        # Display the analysis chart
+        # Create columns for pie charts with better spacing
+        st.markdown("#### 📈 Visual Analysis")
+        col1, col2 = st.columns(2, gap="large")
+        
+        with col1:
+            st.markdown("##### 🎣 Hook Distribution")
+            hook_pie_fig = create_hook_distribution_pie(st.session_state.catch_data)
+            st.plotly_chart(hook_pie_fig, use_container_width=True)
+            
+        with col2:
+            st.markdown("##### 🐟 Fish Size Distribution")
+            size_pie_fig = create_fish_size_pie(st.session_state.catch_data)
+            st.plotly_chart(size_pie_fig, use_container_width=True)
+        
+        st.markdown("---")  # Visual separator
+        
+        # Main analysis chart (existing)
+        st.markdown("#### 📊 Detailed Hook Performance")
         fig = create_catch_analysis_chart(st.session_state.catch_data)
         st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")  # Visual separator
+
+        # Summary statistics
+        st.markdown("#### 📋 Summary Statistics")
+        total_catches = len(st.session_state.catch_data)
+        total_weight = st.session_state.catch_data['Fish Weight (lbs)'].sum()
+        avg_weight = st.session_state.catch_data['Fish Weight (lbs)'].mean()
+        most_productive_hook = st.session_state.catch_data['Hook Number'].mode().iloc[0] if not st.session_state.catch_data.empty else "N/A"
+        
+        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+        
+        with stat_col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">🎣 TOTAL CATCHES</div>
+                <div class="metric-value">{total_catches}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with stat_col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">⚖️ TOTAL WEIGHT</div>
+                <div class="metric-value">{total_weight:.0f} lbs</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with stat_col3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📊 AVG WEIGHT</div>
+                <div class="metric-value">{avg_weight:.1f} lbs</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with stat_col4:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">🏆 BEST HOOK</div>
+                <div class="metric-value">#{most_productive_hook}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # Data table and export
         st.markdown("### 🗂️ Raw Catch Data")
@@ -1321,6 +1387,116 @@ def fish_catch_analysis():
             if st.button("🗑️ Clear All Data", type="primary"):
                 st.session_state.catch_data = pd.DataFrame(columns=['Timestamp', 'Hook Number', 'Fish Weight (lbs)'])
                 st.rerun()
+
+def create_hook_distribution_pie(df):
+    """Creates a pie chart showing which hooks are most productive"""
+    
+    if df.empty:
+        return go.Figure().update_layout(title="No data to display")
+    
+    # Count catches per hook
+    hook_counts = df['Hook Number'].value_counts().head(8)  # Top 8 hooks to avoid overcrowding
+    
+    # Create pie chart
+    fig = go.Figure(data=[go.Pie(
+        labels=[f"Hook #{hook}" for hook in hook_counts.index],
+        values=hook_counts.values,
+        hole=0.4,
+        textinfo='label+percent',
+        textposition='auto',
+        marker=dict(
+            colors=px.colors.qualitative.Set3,
+            line=dict(color='#FFFFFF', width=2)
+        ),
+        pull=[0.05 if i == 0 else 0 for i in range(len(hook_counts))]  # Highlight the top hook
+    )])
+    
+    fig.update_layout(
+        title=dict(
+            text="<b>Most Productive Hooks</b>",
+            x=0.5,
+            font=dict(size=16, color='#333333')
+        ),
+        showlegend=False,  # Remove legend to prevent overlap
+        height=350,
+        margin=dict(t=60, b=20, l=20, r=20),
+        font=dict(size=12)
+    )
+    
+    return fig
+
+def create_fish_size_pie(df):
+    """Creates a pie chart showing fish size distribution with more granular categories"""
+    
+    if df.empty:
+        return go.Figure().update_layout(title="No data to display")
+    
+    # More granular fish size categories
+    def categorize_fish_size(weight):
+        if weight == 0:
+            return "No Fish"
+        elif weight <= 5:
+            return "Tiny (≤5 lbs)"
+        elif weight <= 15:
+            return "Small (6-15 lbs)"
+        elif weight <= 30:
+            return "Medium (16-30 lbs)"
+        elif weight <= 50:
+            return "Large (31-50 lbs)"
+        elif weight <= 100:
+            return "XL (51-100 lbs)"
+        elif weight <= 200:
+            return "XXL (101-200 lbs)"
+        elif weight <= 400:
+            return "Trophy (201-400 lbs)"
+        else:
+            return "Monster (>400 lbs)"
+    
+    df['Size Category'] = df['Fish Weight (lbs)'].apply(categorize_fish_size)
+    size_counts = df['Size Category'].value_counts()
+    
+    # Define colors for each category with better contrast
+    color_map = {
+        "No Fish": "#d3d3d3",
+        "Tiny (≤5 lbs)": "#ffb3ba",
+        "Small (6-15 lbs)": "#bae1ff", 
+        "Medium (16-30 lbs)": "#baffc9",
+        "Large (31-50 lbs)": "#ffffba",
+        "XL (51-100 lbs)": "#ffdfba",
+        "XXL (101-200 lbs)": "#ffc9ba",
+        "Trophy (201-400 lbs)": "#ff9999",
+        "Monster (>400 lbs)": "#ff6b6b"
+    }
+    
+    colors = [color_map.get(cat, "#cccccc") for cat in size_counts.index]
+    
+    # Create pie chart
+    fig = go.Figure(data=[go.Pie(
+        labels=size_counts.index,
+        values=size_counts.values,
+        hole=0.4,
+        textinfo='label+percent',
+        textposition='auto',
+        marker=dict(
+            colors=colors,
+            line=dict(color='#FFFFFF', width=2)
+        ),
+        pull=[0.05 if 'Trophy' in cat or 'Monster' in cat else 0 for cat in size_counts.index]  # Highlight big fish
+    )])
+    
+    fig.update_layout(
+        title=dict(
+            text="<b>Fish Size Categories</b>",
+            x=0.5,
+            font=dict(size=16, color='#333333')
+        ),
+        showlegend=False,  # Remove legend to prevent overlap
+        height=350,
+        margin=dict(t=60, b=20, l=20, r=20),
+        font=dict(size=12)
+    )
+    
+    return fig
 
 def create_catch_analysis_chart(df):
     """Creates a bar chart to visualize catch frequency and weight by hook number."""
