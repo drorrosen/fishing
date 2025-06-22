@@ -1291,7 +1291,7 @@ def fish_catch_analysis():
             st.plotly_chart(hook_pie_fig, use_container_width=True)
             
         with col2:
-            st.markdown("##### 🐟 Heavy Fish Hook Performance (70-350 lbs)")
+            st.markdown("##### 🐟 Individual Heavy Fish (70+ lbs)")
             heavy_fish_fig = create_heavy_fish_hook_analysis(st.session_state.catch_data)
             st.plotly_chart(heavy_fish_fig, use_container_width=True)
         
@@ -1736,25 +1736,25 @@ def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, bu
     return fig
 
 def create_heavy_fish_hook_analysis(df):
-    """Creates a pie chart showing hook number and weight distribution for fish 70+ pounds"""
+    """Creates a pie chart showing individual fish weights with hook numbers"""
     
     if df.empty:
         return go.Figure().update_layout(title="No data to display")
     
-    # Filter for fish 70+ pounds up to 350 pounds as requested by client
-    heavy_fish = df[(df['Fish Weight (lbs)'] >= 70) & (df['Fish Weight (lbs)'] <= 350)]
+    # Filter for fish 70+ pounds as requested by client
+    heavy_fish = df[df['Fish Weight (lbs)'] >= 70]
     
     if heavy_fish.empty:
         # Return empty chart with message
         fig = go.Figure()
         fig.update_layout(
             title=dict(
-                text="<b>Hook Performance: 70-350 lb Fish</b>",
+                text="<b>Individual Heavy Fish (70+ lbs)</b>",
                 x=0.5,
                 font=dict(size=16, color='#333333')
             ),
             annotations=[dict(
-                text="No fish in 70-350 lb range recorded yet",
+                text="No fish 70+ lbs recorded yet",
                 x=0.5, y=0.5,
                 font=dict(size=14, color='#666666'),
                 showarrow=False
@@ -1764,13 +1764,19 @@ def create_heavy_fish_hook_analysis(df):
         )
         return fig
     
-    # Group by hook number and sum the weights for 70+ pound fish
-    hook_weights = heavy_fish.groupby('Hook Number')['Fish Weight (lbs)'].sum().sort_values(ascending=False).head(8)
+    # Sort by weight descending and take top 10 to avoid overcrowding
+    heavy_fish_sorted = heavy_fish.sort_values('Fish Weight (lbs)', ascending=False).head(10)
     
-    # Create pie chart showing hook performance for heavy fish
+    # Create labels showing just individual fish weights
+    labels = [f"{int(weight)} lbs" for weight in heavy_fish_sorted['Fish Weight (lbs)']]
+    
+    # Values are equal counts (each fish gets same percentage regardless of weight)
+    values = np.ones(len(heavy_fish_sorted))  # Each fish counts as 1, giving equal percentages
+    
+    # Create pie chart showing individual fish weights
     fig = go.Figure(data=[go.Pie(
-        labels=[f"Hook #{hook}" for hook in hook_weights.index],
-        values=hook_weights.values,
+        labels=labels,
+        values=values,
         hole=0.4,
         textinfo='label+percent',
         textposition='auto',
@@ -1778,13 +1784,13 @@ def create_heavy_fish_hook_analysis(df):
             colors=px.colors.qualitative.Set2,  # Different color scheme than left chart
             line=dict(color='#FFFFFF', width=2)
         ),
-        pull=[0.05 if i == 0 else 0 for i in range(len(hook_weights))],  # Highlight the top hook
-        hovertemplate='<b>%{label}</b><br>Total Weight: %{value} lbs<br>Percentage: %{percent}<extra></extra>'
+        pull=[0.05 if i == 0 else 0 for i in range(len(values))],  # Highlight the heaviest fish
+        hovertemplate='<b>%{label}</b><br>Percentage: %{percent}<extra></extra>'
     )])
     
     fig.update_layout(
         title=dict(
-            text="<b>Hook Performance: 70-350 lb Fish</b><br><sub>Total Weight by Hook Number</sub>",
+            text="<b>Individual Heavy Fish (70+ lbs)</b><br><sub>Count Distribution by Individual Fish</sub>",
             x=0.5,
             font=dict(size=16, color='#333333')
         ),
