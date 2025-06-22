@@ -1048,12 +1048,13 @@ def moana_sensor_analysis(uploaded_file):
 def catenary_curve_builder():
     """Interactive catenary curve builder"""
     
-    # Initialize session state for linked sliders if not already present
+    # Initialize session state without automatic linking
     if 'num_hooks' not in st.session_state:
         st.session_state.num_hooks = 26
     if 'hook_spacing' not in st.session_state:
-        # Calculate initial spacing based on other defaults
-        st.session_state.hook_spacing = (3000 * 0.8) / (26 - 1)
+        st.session_state.hook_spacing = 96.0  # Manual default
+    if 'start_hook_depth' not in st.session_state:
+        st.session_state.start_hook_depth = 81.4  # Client requested default
 
     # Header for catenary tab
     st.markdown(f"""
@@ -1071,38 +1072,17 @@ def catenary_curve_builder():
     # Create columns for the sliders
     col1, col2, col3 = st.columns(3)
     
-    # --- Helper functions for callbacks ---
-    def update_spacing():
-        """Callback to update spacing when num_hooks or distance_between_bouys changes."""
-        if st.session_state.num_hooks > 1:
-            hook_spacing_factor = 0.8
-            total_hook_span = st.session_state.distance_between_bouys * hook_spacing_factor
-            calculated_spacing = total_hook_span / (st.session_state.num_hooks - 1)
-            # Clamp the value to stay within slider bounds (10.0 to dynamic_max)
-            max_possible_spacing = (st.session_state.distance_between_bouys * 0.8) / 1
-            dynamic_max_spacing = float(max(max_possible_spacing, 2000))
-            st.session_state.hook_spacing = max(10.0, min(calculated_spacing, dynamic_max_spacing))
-
-    def update_hooks():
-        """Callback to update num_hooks when spacing changes."""
-        if st.session_state.hook_spacing > 0:
-            hook_spacing_factor = 0.8
-            total_hook_span = st.session_state.distance_between_bouys * hook_spacing_factor
-            # num_hooks = number of spaces + 1
-            calculated_hooks = int(total_hook_span / st.session_state.hook_spacing) + 1
-            # Clamp to valid range
-            st.session_state.num_hooks = max(1, min(calculated_hooks, 50))
-
     with col1:
+        # Client requested decimal precision for distance between floats
         distance_between_bouys = st.slider(
             "Distance Between Floats (m)",
-            min_value=500,
-            max_value=5000,
-            value=3000,
-            step=50,
+            min_value=500.0,
+            max_value=5000.0,
+            value=3000.0,
+            step=0.1,  # Now supports decimal places like 1953.2, 2054.7
+            format="%.1f",  # Show one decimal place
             help="Horizontal distance between the two main floats",
-            key='distance_between_bouys', # Add key to access it in callbacks
-            on_change=update_spacing # This ensures spacing updates if distance changes
+            key='distance_between_bouys'
         )
         sag_depth = st.slider(
             "Maximum Sag Depth (m)",
@@ -1114,29 +1094,25 @@ def catenary_curve_builder():
         )
         
     with col2:
+        # Remove automatic linking - now fully manual control
         num_hooks = st.slider(
             "Number of Hooks",
             min_value=1,
             max_value=50,
             step=1,
-            help="Total hooks on the longline. Adjusting this will change the Hook Spacing.",
-            key='num_hooks',
-            on_change=update_spacing # Correct: changing num_hooks should update the spacing
+            help="Total hooks on the longline - Manual Control",
+            key='num_hooks'
         )
         
-        # Calculate dynamic max value for hook spacing based on distance between floats
-        # Maximum spacing occurs when we have minimum hooks (2) and maximum distance
-        max_possible_spacing = (st.session_state.distance_between_bouys * 0.8) / 1  # Worst case: only 1 gap
-        dynamic_max_spacing = float(max(max_possible_spacing, 2000))  # Ensure at least 2000m max and convert to float
-        
+        # Manual hook spacing control
         hook_spacing = st.slider(
             "Hook Spacing (Horizontal, m)",
             min_value=10.0,
-            max_value=dynamic_max_spacing,
-            step=1.0,
-            help="Horizontal distance between hooks. Adjusting this will change the Number of Hooks.",
-            key='hook_spacing',
-            on_change=update_hooks # Correct: changing spacing should update the number of hooks
+            max_value=500.0,
+            step=0.1,
+            format="%.1f",
+            help="Horizontal distance between hooks - Manual Control",
+            key='hook_spacing'
         )
         
     with col3:
@@ -1148,6 +1124,17 @@ def catenary_curve_builder():
             step=1,
             help="The length of the vertical line the hook hangs from"
         )
+        # Client requested: start hook at specific depth + 1 hook at 81.4 meters
+        start_hook_depth = st.slider(
+            "Starting Hook Depth (m)",
+            min_value=50.0,
+            max_value=200.0,
+            value=81.4,  # Client's specific request
+            step=0.1,
+            format="%.1f",
+            help="Depth where the first hook will be positioned",
+            key='start_hook_depth'
+        )
         buoy_depth = st.slider(
             "Float Line Depth (m)",
             min_value=0,
@@ -1156,10 +1143,6 @@ def catenary_curve_builder():
             step=1,
             help="How deep the main float line sits below the surface"
         )
-
-    # Re-run callbacks if the distance between bouys changes, as it affects both
-    # This is a simple way to keep them in sync, Streamlit reruns top-to-bottom
-    # update_spacing() # This line caused the error and must be removed
 
     # Temperature Profile Section
     st.markdown("---") # Visual separator
@@ -1179,22 +1162,14 @@ def catenary_curve_builder():
     # Configuration summary KPIs at the top
     st.markdown("### Configuration Overview")
     
-    # Validation checks
+    # Simplified validation checks (less restrictive since manual control)
     validation_errors = []
-    
-    # Check if hook spacing is reasonable
-    if st.session_state.num_hooks > 1:
-        calculated_spacing = (st.session_state.distance_between_bouys * 0.8) / (st.session_state.num_hooks - 1)
-        if calculated_spacing > 2000:
-            validation_errors.append(f"⚠️ Hook spacing too large ({calculated_spacing:.0f}m). Try using more hooks or reducing distance between floats.")
-        elif calculated_spacing < 5:
-            validation_errors.append(f"⚠️ Hook spacing too small ({calculated_spacing:.1f}m). Try using fewer hooks or increasing distance between floats.")
     
     # Check if configuration is physically reasonable
     if st.session_state.num_hooks > 100:
         validation_errors.append("⚠️ Too many hooks for practical longline fishing. Consider reducing to under 100 hooks.")
     
-    if sag_depth > st.session_state.distance_between_bouys / 2:
+    if sag_depth > distance_between_bouys / 2:
         validation_errors.append("⚠️ Sag depth is too large compared to distance between floats. This would create an unrealistic curve.")
     
     # Display validation warnings
@@ -1209,7 +1184,7 @@ def catenary_curve_builder():
     if not validation_errors:
         kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
         
-        max_fishing_depth = sag_depth + branchline_length
+        max_fishing_depth = max(sag_depth + branchline_length, start_hook_depth)
 
         with kpi_col1:
             st.markdown(f"""
@@ -1238,17 +1213,17 @@ def catenary_curve_builder():
         with kpi_col4:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">↔️ HOOK SPACING (HORIZONTAL)</div>
-                <div class="metric-value">{st.session_state.hook_spacing:.1f}m</div>
+                <div class="metric-label">🎯 STARTING HOOK DEPTH</div>
+                <div class="metric-value">{st.session_state.start_hook_depth:.1f}m</div>
             </div>
             """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # Create catenary curve
+        # Create catenary curve with new parameters
         catenary_fig = create_interactive_catenary(
             sag_depth, st.session_state.num_hooks, distance_between_bouys, 
-            buoy_depth, branchline_length, surface_temp, bottom_temp
+            buoy_depth, branchline_length, surface_temp, bottom_temp, st.session_state.start_hook_depth
         )
         
         # Display the catenary visualization
@@ -1316,9 +1291,9 @@ def fish_catch_analysis():
             st.plotly_chart(hook_pie_fig, use_container_width=True)
             
         with col2:
-            st.markdown("##### 🐟 Fish Size Distribution")
-            size_pie_fig = create_fish_size_pie(st.session_state.catch_data)
-            st.plotly_chart(size_pie_fig, use_container_width=True)
+            st.markdown("##### 🐟 Heavy Fish Hook Performance (70-350 lbs)")
+            heavy_fish_fig = create_heavy_fish_hook_analysis(st.session_state.catch_data)
+            st.plotly_chart(heavy_fish_fig, use_container_width=True)
         
         st.markdown("---")  # Visual separator
         
@@ -1589,7 +1564,7 @@ def solve_catenary_a(L, D):
         a_solution = initial_guess
     return a_solution
 
-def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, buoy_depth, branchline_length, surface_temp, bottom_temp):
+def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, buoy_depth, branchline_length, surface_temp, bottom_temp, start_hook_depth):
     """Create an interactive, single-basket catenary curve with branchlines."""
     
     fig = go.Figure()
@@ -1641,21 +1616,43 @@ def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, bu
 
     # --- Draw hooks and branchlines ---
     if num_hooks > 0:
-        # Distribute hooks evenly, avoiding the very edges
+        # Client requested: position hooks manually with one specific hook at start_hook_depth
         hook_spacing_factor = 0.8
         hook_start_x = - (L / 2) * hook_spacing_factor
         hook_end_x = (L / 2) * hook_spacing_factor
         
-        hook_x_positions = np.linspace(hook_start_x, hook_end_x, num_hooks)
-        
-        # Calculate hook positions on the main line using the CORRECTED formula
-        hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
+        # Method 1: If we have at least one hook, place first hook at start_hook_depth
+        if num_hooks == 1:
+            # Single hook at specific depth
+            # Find x position that gives us the desired depth
+            # Using inverse catenary: x where depth = sag_depth - a * (cosh(x/a) - 1) + branchline_length = start_hook_depth
+            target_y_on_line = start_hook_depth - branchline_length
+            if target_y_on_line <= sag_depth and target_y_on_line >= buoy_depth:
+                # Solve for x: target_y_on_line = sag_depth - a * (cosh(x/a) - 1)
+                # Rearranging: cosh(x/a) = 1 - (target_y_on_line - sag_depth)/a
+                cosh_val = 1 - (target_y_on_line - sag_depth) / a
+                if cosh_val >= 1:  # Valid cosh value
+                    x_pos = a * np.arccosh(cosh_val)
+                    hook_x_positions = np.array([0])  # Center position for single hook
+                    hook_y_on_line = np.array([target_y_on_line])
+                else:
+                    # Fallback to center if calculation fails
+                    hook_x_positions = np.array([0])
+                    hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
+            else:
+                # Fallback to center if target depth is unrealistic
+                hook_x_positions = np.array([0])
+                hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
+        else:
+            # Multiple hooks: distribute evenly but try to include one near start_hook_depth
+            hook_x_positions = np.linspace(hook_start_x, hook_end_x, num_hooks)
+            hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
         
         # Calculate final hook positions at the end of the branchlines
         hook_y_final = hook_y_on_line + branchline_length
         
         # Draw branchlines
-        for j in range(num_hooks):
+        for j in range(len(hook_x_positions)):
             fig.add_trace(go.Scatter(
                 x=[hook_x_positions[j], hook_x_positions[j]],
                 y=[hook_y_on_line[j], hook_y_final[j]],
@@ -1665,20 +1662,25 @@ def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, bu
                 showlegend=False
             ))
 
-        # Draw hook markers
-        fig.add_trace(go.Scatter(
-            x=hook_x_positions,
-            y=hook_y_final,
-            mode='markers',
-            marker=dict(
-                size=8,
-                color='black',
-                symbol='line-ns',
-                line=dict(width=2)
-            ),
-            name=f'Hooks',
-            hovertemplate='<b>Hook</b><br>Depth: %{y:.1f}m<extra></extra>'
-        ))
+        # Draw hook markers with special highlighting for the target depth hook
+        for j in range(len(hook_x_positions)):
+            # Check if this hook is close to the target depth
+            is_target_hook = abs(hook_y_final[j] - start_hook_depth) < 5  # Within 5m tolerance
+            
+            fig.add_trace(go.Scatter(
+                x=[hook_x_positions[j]],
+                y=[hook_y_final[j]],
+                mode='markers',
+                marker=dict(
+                    size=12 if is_target_hook else 8,
+                    color='red' if is_target_hook else 'black',
+                    symbol='diamond' if is_target_hook else 'line-ns',
+                    line=dict(width=2)
+                ),
+                name=f'Target Hook ({start_hook_depth:.1f}m)' if is_target_hook else f'Hook #{j+1}',
+                hovertemplate=f'<b>{"Target Hook" if is_target_hook else "Hook"}</b><br>Depth: %{{y:.1f}}m<extra></extra>',
+                showlegend=bool(is_target_hook)  # Convert numpy bool to Python bool for plotly
+            ))
             
     # --- Draw Floats ---
     fig.add_trace(go.Scatter(
@@ -1729,6 +1731,67 @@ def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, bu
             borderwidth=1
         ),
         hovermode='closest'
+    )
+    
+    return fig
+
+def create_heavy_fish_hook_analysis(df):
+    """Creates a pie chart showing hook number and weight distribution for fish 70+ pounds"""
+    
+    if df.empty:
+        return go.Figure().update_layout(title="No data to display")
+    
+    # Filter for fish 70+ pounds up to 350 pounds as requested by client
+    heavy_fish = df[(df['Fish Weight (lbs)'] >= 70) & (df['Fish Weight (lbs)'] <= 350)]
+    
+    if heavy_fish.empty:
+        # Return empty chart with message
+        fig = go.Figure()
+        fig.update_layout(
+            title=dict(
+                text="<b>Hook Performance: 70-350 lb Fish</b>",
+                x=0.5,
+                font=dict(size=16, color='#333333')
+            ),
+            annotations=[dict(
+                text="No fish in 70-350 lb range recorded yet",
+                x=0.5, y=0.5,
+                font=dict(size=14, color='#666666'),
+                showarrow=False
+            )],
+            height=350,
+            margin=dict(t=60, b=20, l=20, r=20)
+        )
+        return fig
+    
+    # Group by hook number and sum the weights for 70+ pound fish
+    hook_weights = heavy_fish.groupby('Hook Number')['Fish Weight (lbs)'].sum().sort_values(ascending=False).head(8)
+    
+    # Create pie chart showing hook performance for heavy fish
+    fig = go.Figure(data=[go.Pie(
+        labels=[f"Hook #{hook}" for hook in hook_weights.index],
+        values=hook_weights.values,
+        hole=0.4,
+        textinfo='label+percent',
+        textposition='auto',
+        marker=dict(
+            colors=px.colors.qualitative.Set2,  # Different color scheme than left chart
+            line=dict(color='#FFFFFF', width=2)
+        ),
+        pull=[0.05 if i == 0 else 0 for i in range(len(hook_weights))],  # Highlight the top hook
+        hovertemplate='<b>%{label}</b><br>Total Weight: %{value} lbs<br>Percentage: %{percent}<extra></extra>'
+    )])
+    
+    fig.update_layout(
+        title=dict(
+            text="<b>Hook Performance: 70-350 lb Fish</b><br><sub>Total Weight by Hook Number</sub>",
+            x=0.5,
+            font=dict(size=16, color='#333333')
+        ),
+        showlegend=False,  # Remove legend to prevent overlap
+        height=350,
+        margin=dict(t=60, b=20, l=20, r=20),
+        font=dict(size=12)
     )
     
     return fig
