@@ -1054,7 +1054,7 @@ def catenary_curve_builder():
     if 'hook_spacing' not in st.session_state:
         st.session_state.hook_spacing = 96.0  # Manual default
     if 'start_hook_depth' not in st.session_state:
-        st.session_state.start_hook_depth = 81.4  # Client requested default
+        st.session_state.start_hook_depth = 85.0  # Client requested default
 
     # Header for catenary tab
     st.markdown(f"""
@@ -1125,15 +1125,15 @@ def catenary_curve_builder():
             help="The length of the vertical line the hook hangs from"
         )
         # Client requested: start hook at specific depth + 1 hook at 81.4 meters
-        start_hook_depth = st.slider(
-            "Starting Hook Depth (m)",
+        end_hook_depth = st.slider(
+            "End Hook Depth (m)",
             min_value=50.0,
             max_value=200.0,
-            value=81.4,  # Client's specific request
+            value=85.0,  # Client's updated request for 85m depth
             step=0.1,
             format="%.1f",
-            help="Depth where the first hook will be positioned",
-            key='start_hook_depth'
+            help="The depth for the first and last hooks on the longline",
+            key='start_hook_depth' # Keep key for session state consistency
         )
         buoy_depth = st.slider(
             "Float Line Depth (m)",
@@ -1184,7 +1184,7 @@ def catenary_curve_builder():
     if not validation_errors:
         kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
         
-        max_fishing_depth = max(sag_depth + branchline_length, start_hook_depth)
+        max_fishing_depth = max(sag_depth + branchline_length, end_hook_depth)
 
         with kpi_col1:
             st.markdown(f"""
@@ -1291,7 +1291,7 @@ def fish_catch_analysis():
             st.plotly_chart(hook_pie_fig, use_container_width=True)
             
         with col2:
-            st.markdown("##### 🐟 Individual Heavy Fish (70+ lbs)")
+            st.markdown("##### 🐟 Individual Heavy Fish & Hook Performance")
             heavy_fish_fig = create_heavy_fish_hook_analysis(st.session_state.catch_data)
             st.plotly_chart(heavy_fish_fig, use_container_width=True)
         
@@ -1564,179 +1564,148 @@ def solve_catenary_a(L, D):
         a_solution = initial_guess
     return a_solution
 
-def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, buoy_depth, branchline_length, surface_temp, bottom_temp, start_hook_depth):
+def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, buoy_depth, branchline_length, surface_temp, bottom_temp, end_hook_depth):
     """Create an interactive, single-basket catenary curve with branchlines."""
     
     fig = go.Figure()
     
-    max_fishing_depth = sag_depth + branchline_length
+    # --- Define Key Y-Positions ---
+    # Where the hooks should end up
+    hook_end_depth = end_hook_depth
+    # Where the mainline attaches (accounting for branchline)
+    mainline_end_depth = hook_end_depth - branchline_length
+    # The deepest point of the mainline
+    mainline_vertex_depth = sag_depth
+    
+    # Maximum depth for display
+    max_fishing_depth = mainline_vertex_depth + branchline_length
 
     # --- Draw Temperature Gradient Background ---
     depth_levels = np.linspace(0, max_fishing_depth + 50, 20)
     for i in range(len(depth_levels) - 1):
-        # Calculate temperature at this depth segment (linear interpolation)
         depth_fraction = (depth_levels[i] / (max_fishing_depth + 50))
         temp = surface_temp - (surface_temp - bottom_temp) * depth_fraction
-        
-        # Normalize temperature to 0-1 for the colorscale
         normalized_temp = (temp - bottom_temp) / (surface_temp - bottom_temp) if (surface_temp - bottom_temp) != 0 else 0.5
-        
         segment_color = px.colors.sample_colorscale('inferno', normalized_temp)[0]
-
-        fig.add_shape(
-            type="rect",
-            x0=-distance_between_bouys, x1=distance_between_bouys * 2,
-            y0=depth_levels[i], y1=depth_levels[i+1],
-            fillcolor=segment_color,
-            line_width=0,
-            layer="below",
-            opacity=0.3
-        )
-
-    L = distance_between_bouys
-    D = sag_depth - buoy_depth
+        fig.add_shape(type="rect", x0=-distance_between_bouys * 1.1, x1=distance_between_bouys * 1.1, y0=depth_levels[i], y1=depth_levels[i+1], fillcolor=segment_color, line_width=0, layer="below", opacity=0.3)
 
     # --- Catenary Calculation ---
-    # 1. Solve for the catenary parameter 'a', which defines the shape
+    L = distance_between_bouys
+    # Calculate the sag (vertical distance from ends to vertex)
+    D = mainline_vertex_depth - mainline_end_depth
+
+    if D < 0:
+        fig.update_layout(title_text="Invalid Configuration: Sag Depth must be deeper than End Hook Depth minus Branchline Length", title_x=0.5)
+        return fig
+        
+    # Solve for catenary parameter
     a = solve_catenary_a(L, D)
 
-    # 2. Generate points for the main catenary curve using the CORRECTED formula
-    # This formula ensures the curve hangs down ("smiles")
-    x_points = np.linspace(-L/2, L/2, 200)
-    y_points = sag_depth - a * (np.cosh(x_points / a) - 1)
+    # Generate points for the mainline
+    # The catenary equation: y = y_vertex - a * (cosh(x/a) - cosh(x_vertex/a))
+    # For a symmetric catenary centered at x=0, this simplifies to:
+    x_mainline = np.linspace(-L/2, L/2, 200)
+    
+    # Calculate y positions ensuring the ends are at mainline_end_depth
+    # At the ends (x = ±L/2), we want y = mainline_end_depth
+    # At the center (x = 0), we want y = mainline_vertex_depth
+    cosh_center = 1  # cosh(0) = 1
+    cosh_end = np.cosh(L/(2*a))
+    
+    # Catenary equation that ensures correct end depths
+    y_mainline = mainline_end_depth + a * (cosh_end - np.cosh(x_mainline/a))
+    
+    fig.add_trace(go.Scatter(x=x_mainline, y=y_mainline, mode='lines', line=dict(color='black', width=3), name='Mainline'))
 
-    # Add the main catenary line
-    fig.add_trace(go.Scatter(
-        x=x_points,
-        y=y_points,
-        mode='lines',
-        line=dict(color='black', width=3),
-        name='Mainline'
-    ))
-
-    # --- Draw hooks and branchlines ---
+    # --- Place ALL hooks on the calculated mainline ---
     if num_hooks > 0:
-        # Client requested: position hooks manually with one specific hook at start_hook_depth
-        hook_spacing_factor = 0.8
-        hook_start_x = - (L / 2) * hook_spacing_factor
-        hook_end_x = (L / 2) * hook_spacing_factor
+        # Distribute hooks evenly along the horizontal span
+        hook_x_positions = np.linspace(-L/2, L/2, num_hooks)
         
-        # Method 1: If we have at least one hook, place first hook at start_hook_depth
-        if num_hooks == 1:
-            # Single hook at specific depth
-            # Find x position that gives us the desired depth
-            # Using inverse catenary: x where depth = sag_depth - a * (cosh(x/a) - 1) + branchline_length = start_hook_depth
-            target_y_on_line = start_hook_depth - branchline_length
-            if target_y_on_line <= sag_depth and target_y_on_line >= buoy_depth:
-                # Solve for x: target_y_on_line = sag_depth - a * (cosh(x/a) - 1)
-                # Rearranging: cosh(x/a) = 1 - (target_y_on_line - sag_depth)/a
-                cosh_val = 1 - (target_y_on_line - sag_depth) / a
-                if cosh_val >= 1:  # Valid cosh value
-                    x_pos = a * np.arccosh(cosh_val)
-                    hook_x_positions = np.array([0])  # Center position for single hook
-                    hook_y_on_line = np.array([target_y_on_line])
-                else:
-                    # Fallback to center if calculation fails
-                    hook_x_positions = np.array([0])
-                    hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
-            else:
-                # Fallback to center if target depth is unrealistic
-                hook_x_positions = np.array([0])
-                hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
-        else:
-            # Multiple hooks: distribute evenly but try to include one near start_hook_depth
-            hook_x_positions = np.linspace(hook_start_x, hook_end_x, num_hooks)
-            hook_y_on_line = sag_depth - a * (np.cosh(hook_x_positions / a) - 1)
+        # Calculate mainline depth at each hook position
+        hook_y_on_mainline = mainline_end_depth + a * (cosh_end - np.cosh(hook_x_positions/a))
         
-        # Calculate final hook positions at the end of the branchlines
-        hook_y_final = hook_y_on_line + branchline_length
-        
-        # Draw branchlines
-        for j in range(len(hook_x_positions)):
+        # Add branchline length to get final hook depth
+        hook_y_final = hook_y_on_mainline + branchline_length
+
+        # Draw all branchlines
+        for j in range(num_hooks):
             fig.add_trace(go.Scatter(
-                x=[hook_x_positions[j], hook_x_positions[j]],
-                y=[hook_y_on_line[j], hook_y_final[j]],
-                mode='lines',
-                line=dict(color='black', width=1),
-                hoverinfo='none',
-                showlegend=False
+                x=[hook_x_positions[j], hook_x_positions[j]], 
+                y=[hook_y_on_mainline[j], hook_y_final[j]], 
+                mode='lines', 
+                line=dict(color='black', width=1), 
+                showlegend=False, 
+                hoverinfo='none'
             ))
 
-        # Draw hook markers with special highlighting for the target depth hook
-        for j in range(len(hook_x_positions)):
-            # Check if this hook is close to the target depth
-            is_target_hook = abs(hook_y_final[j] - start_hook_depth) < 5  # Within 5m tolerance
+        # Separate end hooks from inner hooks
+        if num_hooks >= 2:
+            # Draw inner hooks
+            if num_hooks > 2:
+                inner_x = hook_x_positions[1:-1]
+                inner_y = hook_y_final[1:-1]
+                fig.add_trace(go.Scatter(
+                    x=inner_x, 
+                    y=inner_y, 
+                    mode='markers', 
+                    marker=dict(size=8, color='black', symbol='line-ns'), 
+                    name='Hooks', 
+                    hovertemplate='<b>Hook</b><br>Depth: %{y:.1f}m<extra></extra>', 
+                    showlegend=True
+                ))
             
+            # Draw end hooks (first and last)
+            end_x = [hook_x_positions[0], hook_x_positions[-1]]
+            end_y = [hook_y_final[0], hook_y_final[-1]]
             fig.add_trace(go.Scatter(
-                x=[hook_x_positions[j]],
-                y=[hook_y_final[j]],
-                mode='markers',
-                marker=dict(
-                    size=12 if is_target_hook else 8,
-                    color='red' if is_target_hook else 'black',
-                    symbol='diamond' if is_target_hook else 'line-ns',
-                    line=dict(width=2)
-                ),
-                name=f'Target Hook ({start_hook_depth:.1f}m)' if is_target_hook else f'Hook #{j+1}',
-                hovertemplate=f'<b>{"Target Hook" if is_target_hook else "Hook"}</b><br>Depth: %{{y:.1f}}m<extra></extra>',
-                showlegend=bool(is_target_hook)  # Convert numpy bool to Python bool for plotly
+                x=end_x, 
+                y=end_y, 
+                mode='markers', 
+                marker=dict(size=10, color='blue', symbol='square'), 
+                name=f'End Hooks ({hook_end_depth:.1f}m)', 
+                hovertemplate='<b>End Hook</b><br>Depth: %{y:.1f}m<extra></extra>', 
+                showlegend=True
+            ))
+        else:
+            # Single hook case
+            fig.add_trace(go.Scatter(
+                x=hook_x_positions, 
+                y=hook_y_final, 
+                mode='markers', 
+                marker=dict(size=8, color='black', symbol='line-ns'), 
+                name='Hook', 
+                hovertemplate='<b>Hook</b><br>Depth: %{y:.1f}m<extra></extra>', 
+                showlegend=True
             ))
             
     # --- Draw Floats ---
     fig.add_trace(go.Scatter(
-        x=[-L/2, L/2],
-        y=[buoy_depth, buoy_depth],
-        mode='markers',
-        marker=dict(
-            size=15,
-            color='orange',
-            symbol='circle',
-            line=dict(color='black', width=2)
-        ),
-        name='Floats',
+        x=[-L/2, L/2], 
+        y=[buoy_depth, buoy_depth], 
+        mode='markers', 
+        marker=dict(size=15, color='orange', symbol='circle', line=dict(color='black', width=2)), 
+        name='Floats', 
         hovertemplate='<b>Float</b><br>Depth: %{y:.1f}m<extra></extra>'
     ))
 
     # --- Final Layout Configuration ---
     fig.update_layout(
-        title=dict(
-            text=f"<b>Longline Configuration: {num_hooks} Hooks</b>",
-            x=0.5,
-            font=dict(size=18, color='#333333')
-        ),
-        xaxis=dict(
-            title="Distance (m)",
-            range=[-L/2 - 50, L/2 + 50],
-            gridcolor='#EAEAEA',
-            zeroline=False,
-            showgrid=True,
-            tickfont=dict(size=12, color='#555555')
-        ),
-        yaxis=dict(
-            title="Depth (m)",
-            range=[max_fishing_depth + 50, -10],
-            autorange=False, # Y-axis is already oriented correctly (depth increases downwards)
-            gridcolor='#EAEAEA',
-            showgrid=True,
-            tickfont=dict(size=12, color='#555555')
-        ),
-        plot_bgcolor='rgba(0,0,0,0)', # Make plot background transparent to see shapes
+        title=dict(text=f"<b>Longline Configuration: {num_hooks} Hooks</b>", x=0.5, font=dict(size=18, color='#333333')),
+        xaxis=dict(title="Distance (m)", range=[-L/2 - 100, L/2 + 100], gridcolor='#EAEAEA', zeroline=False, showgrid=True, tickfont=dict(size=12, color='#555555')),
+        yaxis=dict(title="Depth (m)", range=[max_fishing_depth + 50, -10], autorange=False, gridcolor='#EAEAEA', showgrid=True, tickfont=dict(size=12, color='#555555')),
+        plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='white',
         height=700,
         showlegend=True,
-        legend=dict(
-            x=0.02, y=0.98,
-            bgcolor='rgba(255, 255, 255, 0.8)',
-            bordercolor='#CCCCCC',
-            borderwidth=1
-        ),
+        legend=dict(x=0.02, y=0.98, bgcolor='rgba(255, 255, 255, 0.8)', bordercolor='#CCCCCC', borderwidth=1),
         hovermode='closest'
     )
     
     return fig
 
 def create_heavy_fish_hook_analysis(df):
-    """Creates a pie chart showing individual fish weights with hook numbers"""
+    """Creates a pie chart showing individual fish weights with hook numbers to track which hooks catch bigger fish"""
     
     if df.empty:
         return go.Figure().update_layout(title="No data to display")
@@ -1767,8 +1736,9 @@ def create_heavy_fish_hook_analysis(df):
     # Sort by weight descending and take top 10 to avoid overcrowding
     heavy_fish_sorted = heavy_fish.sort_values('Fish Weight (lbs)', ascending=False).head(10)
     
-    # Create labels showing just individual fish weights
-    labels = [f"{int(weight)} lbs" for weight in heavy_fish_sorted['Fish Weight (lbs)']]
+    # Create labels showing individual fish weights AND hook numbers to track which hooks catch bigger fish
+    labels = [f"{int(weight)} lbs (Hook #{hook})" for weight, hook in 
+              zip(heavy_fish_sorted['Fish Weight (lbs)'], heavy_fish_sorted['Hook Number'])]
     
     # Values are equal counts (each fish gets same percentage regardless of weight)
     values = np.ones(len(heavy_fish_sorted))  # Each fish counts as 1, giving equal percentages
@@ -1790,7 +1760,7 @@ def create_heavy_fish_hook_analysis(df):
     
     fig.update_layout(
         title=dict(
-            text="<b>Individual Heavy Fish (70+ lbs)</b><br><sub>Count Distribution by Individual Fish</sub>",
+            text="<b>Individual Heavy Fish & Hook Performance</b><br><sub>Fish Weight & Hook Number Distribution</sub>",
             x=0.5,
             font=dict(size=16, color='#333333')
         ),
