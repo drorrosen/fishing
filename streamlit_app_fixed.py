@@ -1250,6 +1250,48 @@ def fish_catch_analysis():
     if 'catch_data' not in st.session_state:
         st.session_state.catch_data = pd.DataFrame(columns=['Timestamp', 'Hook Number', 'Fish Weight (lbs)'])
 
+    # --- CSV Upload Section ---
+    st.markdown("### 📤 Upload Previous Catch Data")
+    uploaded_file = st.file_uploader(
+        "Upload a CSV file to add previous catch records",
+        type=['csv'],
+        help="Upload your saved catch data CSV to append to current records"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded CSV
+            uploaded_df = pd.read_csv(uploaded_file)
+            
+            # Validate columns
+            required_columns = ['Timestamp', 'Hook Number', 'Fish Weight (lbs)']
+            if all(col in uploaded_df.columns for col in required_columns):
+                # Convert timestamp to datetime
+                uploaded_df['Timestamp'] = pd.to_datetime(uploaded_df['Timestamp'])
+                
+                # Get counts before append
+                before_count = len(st.session_state.catch_data)
+                
+                # Append to existing data
+                st.session_state.catch_data = pd.concat([st.session_state.catch_data, uploaded_df], ignore_index=True)
+                
+                # Remove exact duplicates
+                st.session_state.catch_data = st.session_state.catch_data.drop_duplicates()
+                
+                # Sort by timestamp
+                st.session_state.catch_data = st.session_state.catch_data.sort_values('Timestamp', ascending=False)
+                
+                after_count = len(st.session_state.catch_data)
+                new_records = after_count - before_count
+                
+                st.success(f"✅ Successfully added {new_records} new records! Total records: {after_count}")
+            else:
+                st.error(f"❌ Invalid CSV format. Required columns: {', '.join(required_columns)}")
+        except Exception as e:
+            st.error(f"❌ Error reading CSV file: {str(e)}")
+    
+    st.markdown("---")
+
     # --- Data Input Form ---
     st.markdown("### 📝 Log a New Catch")
     with st.form("catch_form", clear_on_submit=True):
@@ -1271,15 +1313,27 @@ def fish_catch_analysis():
             'Fish Weight (lbs)': [fish_weight]
         })
         st.session_state.catch_data = pd.concat([st.session_state.catch_data, new_catch], ignore_index=True)
-        st.success(f"✅ Catch recorded for hook #{hook_number} ({fish_weight} lbs) on {catch_timestamp.strftime('%Y-%m-%d %H:%M')}!")
+        st.success(f"✅ Catch recorded for hook #{hook_number} ({fish_weight} lbs)!")
 
     st.markdown("---")
 
     # --- Catch Data Visualization & Management ---
     if st.session_state.catch_data.empty:
-        st.info("No catch data logged yet. Use the form above to add your first catch.")
+        st.info("No catch data logged yet. Use the form above to add your first catch or upload a CSV file.")
     else:
         st.markdown("### 📊 Catch Analysis Dashboard")
+        
+        # Quick stats at the top
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+        with col_stat1:
+            st.metric("Total Catches", len(st.session_state.catch_data))
+        with col_stat2:
+            st.metric("Total Weight", f"{st.session_state.catch_data['Fish Weight (lbs)'].sum():.0f} lbs")
+        with col_stat3:
+            heavy_count = len(st.session_state.catch_data[st.session_state.catch_data['Fish Weight (lbs)'] >= 70])
+            st.metric("Heavy Fish (70+ lbs)", heavy_count)
+        
+        st.markdown("---")
         
         # Create columns for pie charts with better spacing
         st.markdown("#### 📈 Visual Analysis")
@@ -1347,21 +1401,54 @@ def fish_catch_analysis():
 
         # Data table and export
         st.markdown("### 🗂️ Raw Catch Data")
-        st.dataframe(st.session_state.catch_data, use_container_width=True)
         
-        col1, col2 = st.columns([1, 0.2])
+        # Add filter options
+        col_filter1, col_filter2 = st.columns(2)
+        with col_filter1:
+            min_weight = st.number_input("Min Weight Filter (lbs)", min_value=0, max_value=1000, value=0)
+        with col_filter2:
+            selected_hooks = st.multiselect(
+                "Filter by Hook Numbers", 
+                options=sorted(st.session_state.catch_data['Hook Number'].unique()),
+                default=None
+            )
+        
+        # Apply filters
+        filtered_data = st.session_state.catch_data
+        if min_weight > 0:
+            filtered_data = filtered_data[filtered_data['Fish Weight (lbs)'] >= min_weight]
+        if selected_hooks:
+            filtered_data = filtered_data[filtered_data['Hook Number'].isin(selected_hooks)]
+        
+        st.dataframe(filtered_data, use_container_width=True)
+        
+        # Export options
+        st.markdown("### 💾 Data Management")
+        col1, col2, col3 = st.columns(3)
         with col1:
             csv = st.session_state.catch_data.to_csv(index=False).encode('utf-8')
             st.download_button(
-                "📥 Download Catch Data (CSV)",
+                "📥 Download All Data (CSV)",
                 csv,
-                f"catch_data_{datetime.now().strftime('%Y%m%d')}.csv",
-                "text/csv"
+                f"catch_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "text/csv",
+                help="Save your catch data to upload later"
             )
         with col2:
+            # Download filtered data
+            if len(filtered_data) < len(st.session_state.catch_data):
+                filtered_csv = filtered_data.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    "📥 Download Filtered Data",
+                    filtered_csv,
+                    f"filtered_catch_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    "text/csv"
+                )
+        with col3:
             if st.button("🗑️ Clear All Data", type="primary"):
-                st.session_state.catch_data = pd.DataFrame(columns=['Timestamp', 'Hook Number', 'Fish Weight (lbs)'])
-                st.rerun()
+                if st.checkbox("Confirm clear all data"):
+                    st.session_state.catch_data = pd.DataFrame(columns=['Timestamp', 'Hook Number', 'Fish Weight (lbs)'])
+                    st.rerun()
 
 def create_hook_distribution_pie(df):
     """Creates a pie chart showing which hooks are most productive"""
