@@ -1661,11 +1661,15 @@ def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, bu
     hook_end_depth = end_hook_depth
     # Where the mainline attaches (accounting for branchline)
     mainline_end_depth = hook_end_depth - branchline_length
-    # The deepest point of the mainline
+    # The deepest point of the mainline - FORCE it to use the sag_depth value
     mainline_vertex_depth = sag_depth
     
-    # Maximum depth for display
-    max_fishing_depth = mainline_vertex_depth + branchline_length
+    # Ensure mainline goes to the specified sag depth even if less than end hook depth
+    # If sag_depth is less than mainline_end_depth, we'll create an inverted catenary
+    # that rises in the middle instead of sagging
+    
+    # Maximum depth for display - use the greater of sag depth or end hook depth
+    max_fishing_depth = max(mainline_vertex_depth + branchline_length, hook_end_depth)
 
     # --- Draw Temperature Gradient Background ---
     depth_levels = np.linspace(0, max_fishing_depth + 50, 20)
@@ -1679,38 +1683,66 @@ def create_interactive_catenary(sag_depth, num_hooks, distance_between_bouys, bu
     # --- Catenary Calculation ---
     L = distance_between_bouys
     # Calculate the sag (vertical distance from ends to vertex)
+    # This can be negative if sag_depth < mainline_end_depth (inverted catenary)
     D = mainline_vertex_depth - mainline_end_depth
 
-    if D < 0:
-        fig.update_layout(title_text="Invalid Configuration: Sag Depth must be deeper than End Hook Depth minus Branchline Length", title_x=0.5)
-        return fig
-        
-    # Solve for catenary parameter
-    a = solve_catenary_a(L, D)
+    # Handle both normal and inverted catenary cases
+    if abs(D) < 1e-6:
+        # Nearly straight line - just draw a horizontal line
+        x_mainline = np.linspace(-L/2, L/2, 200)
+        y_mainline = np.full_like(x_mainline, mainline_end_depth)
+    else:
+        # Solve for catenary parameter using absolute value of D
+        a = solve_catenary_a(L, abs(D))
 
-    # Generate points for the mainline
-    # The catenary equation: y = y_vertex - a * (cosh(x/a) - cosh(x_vertex/a))
-    # For a symmetric catenary centered at x=0, this simplifies to:
-    x_mainline = np.linspace(-L/2, L/2, 200)
-    
-    # Calculate y positions ensuring the ends are at mainline_end_depth
-    # At the ends (x = ±L/2), we want y = mainline_end_depth
-    # At the center (x = 0), we want y = mainline_vertex_depth
-    cosh_center = 1  # cosh(0) = 1
-    cosh_end = np.cosh(L/(2*a))
-    
-    # Catenary equation that ensures correct end depths
-    y_mainline = mainline_end_depth + a * (cosh_end - np.cosh(x_mainline/a))
+        # Generate points for the mainline
+        x_mainline = np.linspace(-L/2, L/2, 200)
+        
+        # Calculate y positions ensuring the ends are at mainline_end_depth
+        # At the ends (x = ±L/2), we want y = mainline_end_depth
+        # At the center (x = 0), we want y = mainline_vertex_depth
+        cosh_center = 1  # cosh(0) = 1
+        cosh_end = np.cosh(L/(2*a))
+        
+        # Catenary equation that ensures correct end depths and handles both normal and inverted cases
+        if D > 0:
+            # Normal catenary - sags downward
+            y_mainline = mainline_end_depth + a * (cosh_end - np.cosh(x_mainline/a))
+        else:
+            # Inverted catenary - rises upward in the middle
+            y_mainline = mainline_end_depth - a * (cosh_end - np.cosh(x_mainline/a))
     
     fig.add_trace(go.Scatter(x=x_mainline, y=y_mainline, mode='lines', line=dict(color='black', width=3), name='Mainline'))
+    
+    # Add a marker at the vertex (deepest/shallowest point) to verify it reaches the specified depth
+    vertex_x = 0  # Center of the catenary
+    vertex_y = mainline_vertex_depth
+    fig.add_trace(go.Scatter(
+        x=[vertex_x], 
+        y=[vertex_y], 
+        mode='markers+text',
+        marker=dict(size=12, color='red', symbol='diamond', line=dict(color='white', width=2)),
+        text=[f'{vertex_y:.1f}m'],
+        textposition='top center',
+        name=f'Sag Depth: {vertex_y:.1f}m',
+        hovertemplate='<b>Sag Depth</b><br>Depth: %{y:.1f}m<extra></extra>'
+    ))
 
     # --- Place ALL hooks on the calculated mainline ---
     if num_hooks > 0:
         # Distribute hooks evenly along the horizontal span
         hook_x_positions = np.linspace(-L/2, L/2, num_hooks)
         
-        # Calculate mainline depth at each hook position
-        hook_y_on_mainline = mainline_end_depth + a * (cosh_end - np.cosh(hook_x_positions/a))
+        # Calculate mainline depth at each hook position - handle both normal and inverted cases
+        if abs(D) < 1e-6:
+            # Straight line case
+            hook_y_on_mainline = np.full_like(hook_x_positions, mainline_end_depth)
+        elif D > 0:
+            # Normal catenary - sags downward
+            hook_y_on_mainline = mainline_end_depth + a * (cosh_end - np.cosh(hook_x_positions/a))
+        else:
+            # Inverted catenary - rises upward
+            hook_y_on_mainline = mainline_end_depth - a * (cosh_end - np.cosh(hook_x_positions/a))
         
         # Add branchline length to get final hook depth
         hook_y_final = hook_y_on_mainline + branchline_length
